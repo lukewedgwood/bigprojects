@@ -1,0 +1,686 @@
+library(leaps)
+library(tidyverse)
+library(MASS)
+library(dplyr)
+library(ggplot2)
+attach(ECDC)
+colnames(ECDC)
+
+
+#View(ECDC)
+
+casespermonth <- filter(ECDC, popData2018 > 0, ghsi > 0) 
+nrow(casespermonth)
+attach(casespermonth)
+casespermonth= aggregate(casespermonth[, c(monthcases=5, 6) ] , list(month = month, countries = countriesAndTerritories, adm0_a3= countryterritoryCode), sum)
+nrow(casespermonth)
+newmortalityrate = casespermonth  %>%
+  mutate( mortality =  deaths/cases ,
+          cases = cases,
+          deaths = deaths) 
+
+#finding the average cases in March and April
+abcdat <- filter(casespermonth, month=="3")
+attach(abcdat)
+mean(abcdat$cases)#4111.077
+bcddat <- filter(casespermonth, month == "4")
+attach(bcddat)#13421.93
+mean(bcddat$cases)
+anotherpart <- filter(ECDC, popData2018 > 0, ghsi > 0)
+attach(anotherpart)
+anotherpart = aggregate(anotherpart[, c(monthcasesc= 10, 12, 15, 13) ] ,  list(month = month, adm0_a3= countryterritoryCode), median)
+?cbind
+nrow(anotherpart)
+nrow(newmortalityrate)
+monthlygeo <-base::cbind(newmortalityrate, ghsi = anotherpart$ghsi, popData2018 = anotherpart$popData2018, healthSpending = anotherpart$healthSpending, longitude = anotherpart$longitude)
+monthlygeo <- filter(monthlygeo, healthSpending>0)
+nrow(monthlygeo)
+attach(monthlygeo)
+monthlygeo <- monthlygeo %>%dplyr::mutate( percapita =cases/popData2018)
+sd(healthSpending)
+head(casespermonth)
+scaledmortality = dplyr::select(monthlygeo, mortality)
+scaledmortality = scale(scaledmortality)
+scaledcases = dplyr::select(monthlygeo, percapita,countries)
+View(scaledcases)
+scaledcases <- aggregate(percapita, list(countries), sum)
+#scaledcases = scale(scaledcases)
+#scaledcases = inner_join(scaledcases, monthlygeo, by = countries)
+scaledspending = dplyr::select(monthlygeo, healthSpending)
+scaledspending = scale(scaledspending)
+#View(scaledspending)
+scaledghsi = dplyr::select(monthlygeo, ghsi = ghsi)
+scaledghsi = scale(scaledghsi)
+scaleddf = cbind(monthlygeo, scaled.spending = scaledspending[,1], relative.mortality = scaledmortality[,1], relative.ghsi= scaledghsi[,1])
+View(scaleddf)
+
+attach(scaleddf)
+head(scaleddf)
+#counts least mortality for lease ghsi
+resourcefulness = -1*relative.mortality -  relative.ghsi
+#counts least cases for least ghsi
+hardhit = -1* relative.cases - relative.ghsi
+attach(monthlygeo)
+monthlygeo = cbind(monthlygeo, resourcefulness, hardhit)
+View(monthlygeo)
+
+
+
+
+#LOOKING AT SOME RELATIONSHIPS OF INTEREST
+
+#View(arrange)
+
+nrow(scaleddf)
+count = seq(1, 700, by =1)
+dat <- filter(monthlygeo, month == "4")
+nrow(dat)
+p<-ggplot2::ggplot(data=dat,aes(x=count))
+p+geom_point(aes( y = healthSpending), colour =  "steelblue" )
+q<-ggplot2::ggplot(data=dat,aes(x=healthSpending, y = percapita))
+q+ geom_point( colour =  "red1", )+ xlab("Out of Pocket Health Spending per Capita, USD PPP (2017)")+ylab("Total Cases per Capita in April ")+ggtitle("Country Cases in April vs. Out of pocket Health Spenging")
+print(q+geom_point()+ggtitle("GHSI"))
+
+
+
+geogeo = filter(monthlygeo, month == "4")
+geogeo = dplyr::select(geogeo, healthSpending = healthSpending, percapita = percapita, countries, adm0_a3)+
+ 
+
+geogeo$spendtile <- ntile(geogeo$healthSpending, 5)
+geogeo$casetile<- ntile(geogeo$percapita, 5)
+
+clustertotal = aggregate( geogeo[, 1, 2 ], list( geogeo$spendtile), length)
+clustertotal[,2]
+# 63 63 63 63 63
+clustermean = aggregate( geogeo$percapita, list( geogeo$casetile), mean)
+#View(clustermean)
+clustermean = aggregate( geogeo$healthSpending, list( geogeo$spendtile), mean)
+#View(clustermean)
+clustermean[,2]
+summary(geogeo$quantile)
+
+dat = filter(geogeo, casetile == "1", spendtile == "1")
+dat = dat%>%
+        mutate( per100k = 100000*percapita)
+dat$casetile[ dat$casetile == '1'] <- 'a'
+colnames(geogeo)
+#geoinner = gilter(dat, geogeo, by = "countries")
+nrow(geoinner)
+geoanti = filter( geogeo, as.integer(casetile)>1 || spendtile >1, as.integer(spendtile)>1)
+
+geoanti$casetile <- 'b'
+geogeo = merge(geoanti, dat, all=TRUE)
+nrow(geogeo)
+
+library(maps)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library("sf")
+library(rgeos)
+library(scales)
+#View(geogeo)
+library(MASS)
+install.packages("tmap")
+library(tmap)
+library(tmaptools)
+install.packages("tmapools")
+install.packages("tmap")
+install.packages("leaflet")
+my_map <- ne_countries(returnclass="sf")
+map_and_data = left_join(my_map, geogeo, by = "adm0_a3" )
+#View(map_and_data[, c(10, 64:70)])
+#abc = dplyr::select(joine_data, GHSI, mortality.monthly, cases, popData2018, deaths)
+#str(ne_countries(returnclass="sf"))
+#new_map = inner_join(my_map, ECDC)
+#"#E69F00","#DD8888"
+heatcolour <- c("red1", "slategray3" )
+
+filtmap = filter( map_and_data, casetile == "a")
+dfmap = map_and_data
+ggplot(data = dfmap, aes(fill = casetile=="b"))+geom_sf(stat = "identity")+
+  labs(fill = "Country Group")+coord_sf(xlim = c(-20, 150), ylim = c(-50,50))+
+  scale_fill_manual(labels = c("Interesting Countries", "Other", "No data"), values = heatcolour, na.value= "slategray2")
+
+Mypal <- c("#313695","#fee090")
+map_and_data = left_join(my_map, monthlygeo, by = "adm0_a3" )
+ggplot(data = map_and_data )+geom_sf(aes(fill = ghsi))+
+  scale_fill_gradient(low = "#DD8888", high = "orange", na.value= "lemonchiffon2")+coord_sf(xlim = c(-150, 150), ylim = c(-80,85))
+tm_shape(map_and_data)+tm_polygons(  "ghsi", title = "GHSI", id = "adm0_a3", palette = "Greens")+
+   tm_layout( legend.title.size=1,legend.text.size = 0.6,legend.position = c("left","centre"),legend.bg.color = "white",legend.bg.alpha = 1)+
+  coord_sf(xlim = c(-20, 150), ylim = c(-50,50))
+#tm_fill( title = "GHSI", palette = "Greens")
+
+numRows = 700
+id = seq(1, numRows, by = 1)
+geoShuffle = slice(monthlygeo, sample(1:n()))
+geoShuffle = mutate(geoShuffle, id)
+
+totalError = rep(0,k)
+avgError = rep(0,k)
+j=1
+k=5
+nrow(geoShuffle)
+numRows = 700
+id = seq(1, 700, by =1)
+
+errors1 = rep(0,5)
+errors2 = rep(0,5)
+
+  for(i in 1:k){
+    test = filter(geoShuffle, id >= (i-1)*numRows/k+1 & id <=i*numRows/k)
+    train = anti_join(geoShuffle, test, by="id")
+    model = lm(ghsi~percapita, data = train)
+    errors1[i] = mean((test$ghsi - predict.lm(model, test))^2)
+  }
+errors1
+
+  for(i in 1:k){
+    test = filter(geoShuffle, id >= (i-1)*numRows/k+1 & id <=i*numRows/k)
+    train = anti_join(geoShuffle, test, by="id")
+    model = lm(ghsi~healthSpending, data = train)
+    errors2[i] = mean((test$ghsi - predict.lm(model, test))^2)
+  }
+errors2
+
+
+
+avgError1= 0
+avgError2 = 0
+
+k=5
+
+  avgError1 = avgError1+sqrt(var(errors1[j])/k)
+  avgError2 = avgError2+sqrt(var(errors2[j])/k)
+
+View(avgError1)
+avgError1/k
+avgError2/k
+se = rep(0,2)
+for(j in 1:2){
+  se[j] = sqrt(var(errors[j,])/k)
+}
+se
+#now making data frame for ease of plotting
+x = seq(1,2)
+x
+faithBest = data.frame(x, avgRegEr/k, se)
+library(tidyverse)
+k=5
+ggplot2::ggplot(data = faithBest, aes(x = x, y=avgRegEr.k))+
+  geom_point()+
+  geom_line()+
+  geom_errorbar(aes(ymin = avgRegEr.k-se, ymax = avgRegEr.k +se))
+
+
+attach(ECDC)
+#There are 209 countries in he original dataset
+
+abcdat <- filter(ECDC, month == "3")
+abccasetotaldat <- aggregate(abcdat[, c("cases")], list(countriesAndTerritories),sum)
+
+attach(abcdat)#3512.609
+mean(abcdat$casetotal)
+
+bcddat<- filter(ECDC, month == "4")
+bcddat <- abcdat%>%
+  group_by(countriesAndTerritories)%>%
+  summarise(casetotal = sum(cases))
+attach(bcddat)# 4137193
+mean(bcddat$casetotal)
+
+
+
+View(abcdat)
+
+
+#SETTING UP THE MODELS TRYING INITIAL MODELS
+
+
+
+marchstats<-filter(monthlygeo, month == "3")
+aprilstats <-filter(monthlygeo, month== "4")
+nrow(marchstats)
+
+aprilstats <- aprilstats%>% dplyr::select( percapita.april = percapita,
+                                           mortality.april = mortality,
+                                           deaths.april = deaths, 
+                                           cases.april = cases, adm0_a3)
+nrow(aprilstats)
+#The goal is to model the geographic distribution of SARS-Cov-2 in April from
+#information that was openly available in March, if that helps justify
+#the name of the "aprilgeo" data set/matrix
+#the ptimary key, "adm0_a3", is named strangely because it matches the name
+#used for territory codes in the built in matrix that's used to generate 
+#choropleth maps. This allows me to make one more quickly if needed.
+aprilgeo <- inner_join(marchstats, aprilstats, by = "adm0_a3")
+
+
+
+geoShuflle <-aprilgeo
+numRows = nrow(geoShuffle) #there are 163 in this set
+id = seq(1, numRows, by =1)
+geoShuffle = slice(geoShuffle, sample(1:n()))
+geoRandom = mutate(geoShuffle, id)
+nrow(geoRandom)
+#everything excep for cases.april was already known by the end of march
+geoNoName = dplyr::select(aprilgeo,cases.april, cases, percapita,deaths, popData2018, ghsi, mortality, healthSpending)
+
+
+#summary(aprilgeo)
+
+
+
+#PART ONE "BEST" METHOD AND REGRESSION
+
+best = regsubsets(cases.april~., data = geoNoName, nvmax=20)
+summary(best)
+coef(best, 3)
+attach(aprilgeo)
+plot(y=cases.april, x= deaths,)
+#should actually be twelve instead of 11, interesting that this is not the case
+summary(forward)$rsq
+summary(forward)$cp
+#aic isn't working
+summary(forward)$bic
+plot(summary(forward)$rsq, type = "o")
+
+
+coef(forward, 1)
+coef(forward, 2)
+coef(forward, 3)
+
+best = regsubsets(cases.april~.-cases, poly(cases,2, RAW = TRUE), method = "barckward", data = geoNoName, nvmax = 10)
+summary()
+
+
+
+summary(best)$rsq
+summary(best)$cp
+summary(best)$bic
+bestII = regsubsets(cases.april~poly(cases, 2)+poly(deaths, 2)+poly(popData2018, 2)+
+                      +poly(ghsi, 2)+poly(mortality, 2)+ poly(healthSpending, 2)+poly(percapita, 2),
+                    data = geoNoName, nvmax = 10)
+coef(bestII, 1)
+coef(bestII, 2)
+summary(bestII)$rsq
+summary(bestII)$cp
+summary(bestII)$bic
+
+#PART 2 FORWARD
+forward = regsubsets(cases.april~.,method = "forward", data=geoNoName)
+summary(forward)
+summary(forward)$rsq
+summary(forward)$cp
+summary(forward)$bic
+x = seq(1,7, by = 1)
+y = summary(forward)$rsq
+rsqforwardRes = data.frame(x,y)
+ggplot(aes(x=x, y=y), data = rsqforwardRes) + geom_point() + geom_line()+
+  xlab("model number") + ylab("R sqared")
+
+
+
+best2 = regsubsets(GHSI~poly(mortality.monthly, 2)+ poly(cases, 2)+
+                     poly(popData2018, 2)+
+                     poly(deaths, 2),
+                   data = geoNoName, nvmax = 10)
+
+summary(bestII)
+summary(best2)$rsq
+coef(best, 1)
+coef(best, 2)
+coef(best, 3)
+
+
+summary(best2)$rsq
+summary(best2)$adjr2
+x = seq(1,8, by = 1)
+y = summary(best2)$rsq
+rsqRes = data.frame(x,y)
+plot(summary(best2)$rsq)
+ggplot(aes(x=x, y=y), data = rsqRes) + geom_point() + geom_line()+
+  xlab("model number") + ylab("R^2")
+
+x = seq(1,8, by = 1)
+y = summary(best2)$cp
+cpRes = data.frame(x,y)
+ggplot(aes(x=x, y=y), data = cpRes) + geom_point() + geom_line()+
+  xlab("model number") + ylab("Cp score")
+
+x = seq(1,8, by = 1)
+y = summary(best2)$bic
+bicRes = data.frame(x,y)
+ggplot(aes(x=x, y=y), data = bicRes) + geom_point() + geom_line()+
+  xlab("model number") + ylab("Bayesian Information Criterion")
+
+plot(summary(best2)$rsq, type = 'o', xlab = "model number", ylab="R^2" )
+plot(summary(best2)$cp, type = 'o', xlab = "model number", ylab="Cp score")
+plot(summary(best2)$bic, type = 'o', xlab = "model number", ylab="Bayesian Information Criterion")
+
+coef(best2, 1)
+coef(best2, 2)
+coef(best2, 3)
+
+
+#PART 3 BACKWARD
+backward = regsubsets(cases.april~.,method = "backward", data=geoNoName, nvmax = 12)
+summary(backward)
+summary(backward)$rsq
+summary(backward)$cp
+summary(backward)$bic
+
+
+attach(geoNoName)
+#backward = regsubsets(cases.april~., poly(cases, 2, raw = TRUE),
+#poly(deaths, 2,  raw = TRUE)+poly(popData2018, 2,  raw = TRUE)
+#+poly(ghsi, 2, raw = TRUE)+poly(mortality, 2,  raw = TRUE)+ 
+#poly(healthSpending, 2,  raw = TRUE)+poly(percapita, 2,  raw = TRUE), nvmax = 20, data=geoNoName, method = "backward")
+
+
+coef(backward, 1)
+coef(backward, 2)
+coef(backward, 3)
+coef(backward, 4)
+plot(summary(backward)$rsq)
+
+backwardII = regsubsets(cases.april~poly(cases, 2)+poly(deaths, 2)+poly(popData2018, 2)+
+                          +poly(ghsi, 2)+poly(mortality, 2)+ poly(healthSpending, 2)+poly(percapita, 2),
+                        data = geoNoName, nvmax = 20, method = "backward")
+
+which.max(summary(backwardII)$rsq)
+which.min(summary(backwardII)$cp)
+which.min(summary(backwardII)$bic)
+
+coef(backwardII, 14)
+coef(backwardII, 7)
+coef(backwardII, 6)
+
+cor(geoNoName)
+
+#PART 4 CORRELATION MATRIX
+
+popData2018 deaths poly(mortality, 3, raw = TRUE)1   poly(mortality, 3, raw = TRUE)2 poly(mortality, 3, raw = TRUE)3
+
+
+
+#PART 5 REGRESSION
+
+
+
+  
+  nummodels = 10
+  modelnames = rep(0, nummodels)
+  modelnames[1]= "cases.april~cases"
+  modelnames[2]= "cases.april~healthSpending"   # another strong performer in correlation matrix
+  modelnames[3]= "cases.april~cases+healthSpending"  #two strong performers in the correlation matrix
+  modelnames[4]= "cases.april~cases+deaths"   #model 2 from best ranking table
+  modelnames[5]= "cases.april~cases+deaths+popData2018"   #model 3 from best ranking table
+  modelnames[6]= "cases.april~cases+percapita+deaths+popData2018"   #model 4 from best ranking table
+  modelnames[7]= "cases.april~cases+percapita+deaths+popData2018+healthSpending"   #model 5 from best ranking table
+  modelnames[8]= "cases.april~poly(cases, 2)"   #model 1 from bestII
+  modelnames[9]= "cases.april~poly(cases, 2)+ poly(deaths, 2)" #model 3 from bestII ranking table
+  modelnames[10]= "cases.april~poly(cases, 2)+ poly(deaths, 2)+poly(popData2018, 2)"     #model 5 from bestII ranking table
+  modelnames[11]= "cases.april~poly(cases, 2)+ poly(deaths, 2)+poly(popData2018, 2) + poly(ghsi, 2)"    #model 6 from bestII ranking table, also model 7 in backwardII
+  modelnames[12]= "cases.april~poly(cases, 2)+poly(deaths, 2)+poly(popData2018, 2)+poly(ghsi, 2)+poly(mortality, 2)+poly(healthSpending, 2)+poly(percapita, 2)"   #model 14 in backwardII ranking table
+  
+
+
+  attach(geoRandom)
+  
+  
+    
+    
+  geoShuflle <-aprilgeo
+  numRows = nrow(geoShuffle) #there are 107 in this set
+  id = seq(1, numRows, by =1)
+  geoShuffle = slice(geoShuffle, sample(1:n()))
+  geoRandom = mutate(geoShuffle, id)
+  nrow(geoRandom)
+  #everything except for cases.april was already known by the end of march
+  geoNoName = dplyr::select(aprilgeo,cases.april, cases, percapita,deaths, popData2018, ghsi, mortality, healthSpending)
+  
+  numRows = nrow(geoShuffle) #107
+  k=5
+  errors = matrix( nrow = 12, ncol = 5)
+  #errors[1,2] = 0
+  #View(errors)
+  for(j in 1:10){
+    for(i in 1:5){
+      errors[j,i] = 0
+    }
+  }
+  totalError = 0
+  
+  for(i in 1:k){
+    test = filter(geoRandom, id >= (i-1)*numRows/k+1 & id <=i*numRows/k)
+    train = anti_join(geoRandom, test, by="id")
+    model = lm(eval(parse(text=paste(modelnames[1])), train))
+    errors[1, i] = mean((test$cases.april - predict.lm(model, test))^2)
+    totalError = errors[1, i] + totalError
+  }
+  
+
+  for(i in 1:k){
+    test = filter(geoRandom, id >= (i-1)*numRows/k+1 & id <=i*numRows/k)
+    train = anti_join(geoRandom, test, by="id")
+    model = lm(eval(parse(text=paste(modelnames[2])), train))
+    errors[2, i] = mean((test$cases.april - predict.lm(model, test))^2)
+    totalError = errors[2, i] + totalError
+  }
+  
+  for(i in 1:k){
+    test = filter(geoRandom, id >= (i-1)*numRows/k+1 & id <=i*numRows/k)
+    train = anti_join(geoRandom, test, by="id")
+    model = lm(eval(parse(text=paste(modelnames[3])), train))
+    errors[3, i] = mean((test$cases.april - predict.lm(model, test))^2)
+    totalError = errors[3, i] + totalError
+  }
+  for(i in 1:k){
+    test = filter(geoRandom, id >= (i-1)*numRows/k+1 & id <=i*numRows/k)
+    train = anti_join(geoRandom, test, by="id")
+    model = lm(eval(parse(text=paste(modelnames[4])), train))
+    errors[4, i] = mean((test$cases.april - predict.lm(model, test))^2)
+    totalError = errors[4, i] + totalError
+  }
+  for(i in 1:k){
+    test = filter(geoRandom, id >= (i-1)*numRows/k+1 & id <=i*numRows/k)
+    train = anti_join(geoRandom, test, by="id")
+    model = lm(eval(parse(text=paste(modelnames[5])), train))
+    errors[5, i] = mean((test$cases.april - predict.lm(model, test))^2)
+    totalError = errors[5, i] + totalError
+  }
+  for(i in 1:k){
+    test = filter(geoRandom, id >= (i-1)*numRows/k+1 & id <=i*numRows/k)
+    train = anti_join(geoRandom, test, by="id")
+    model = lm(eval(parse(text=paste(modelnames[6])), train))
+    errors[6, i] = mean((test$cases.april - predict.lm(model, test))^2)
+    totalError = errors[6, i] + totalError
+  }
+  
+  for(i in 1:k){
+    test = filter(geoRandom, id >= (i-1)*numRows/k+1 & id <=i*numRows/k)
+    train = anti_join(geoRandom, test, by="id")
+    model = lm(eval(parse(text=paste(modelnames[7])), train))
+    errors[7, i] = mean((test$cases.april - predict.lm(model, test))^2)
+    totalError = errors[7, i] + totalError
+  }
+  for(i in 1:k){
+    test = filter(geoRandom, id >= (i-1)*numRows/k+1 & id <=i*numRows/k)
+    train = anti_join(geoRandom, test, by="id")
+    model = lm(eval(parse(text=paste(modelnames[8])), train))
+    errors[8, i] = mean((test$cases.april - predict.lm(model, test))^2)
+    totalError = errors[8, i] + totalError
+  }
+  
+  for(i in 1:k){
+    test = filter(geoRandom, id >= (i-1)*numRows/k+1 & id <=i*numRows/k)
+    train = anti_join(geoRandom, test, by="id")
+    model = lm(eval(parse(text=paste(modelnames[9])), train))
+    errors[9, i] = mean((test$cases.april - predict.lm(model, test))^2)
+    totalError = errors[9, i] + totalError
+  }
+  
+  for(i in 1:k){
+    test = filter(geoRandom, id >= (i-1)*numRows/k+1 & id <=i*numRows/k)
+    train = anti_join(geoRandom, test, by="id")
+    model = lm(eval(parse(text=paste(modelnames[10])), train))
+    errors[10, i] = mean((test$cases.april - predict.lm(model, test))^2)
+    totalError = errors[10, i] + totalError
+  }
+  
+  for(i in 1:k){
+    test = filter(geoRandom, id >= (i-1)*numRows/k+1 & id <=i*numRows/k)
+    train = anti_join(geoRandom, test, by="id")
+    model = lm(eval(parse(text=paste(modelnames[11])), train))
+    errors[11, i] = mean((test$cases.april - predict.lm(model, test))^2)
+    totalError = errors[11, i] + totalError
+  }
+  
+  for(i in 1:k){
+    test = filter(geoRandom, id >= (i-1)*numRows/k+1 & id <=i*numRows/k)
+    train = anti_join(geoRandom, test, by="id")
+    model = lm(eval(parse(text=paste(modelnames[12])), train))
+    errors[12, i] = mean((test$cases.april - predict.lm(model, test))^2)
+    totalError = errors[12, i] + totalError
+  }
+  
+  
+  
+  
+  
+  View(errors)
+  
+  avgRegEr = rep(0,12)
+  avgRegEr
+  for(j in 1:12){
+    for(i in 1:5){
+      avgRegEr[j] = avgRegEr[j]+errors[j, i]
+    }
+  }
+  
+  
+  
+se=rep(0,12)
+for (i in 1:12){
+  se[i] = sqrt(var(errors[i,])/k)
+}
+se
+  
+
+x = seq(1,12, by = 1)
+geoBest = data.frame(x,avgRegEr/k , se)
+geoBest
+  
+ggplot(data = geoBest, aes(x = x, y=avgRegEr.k))+
+  geom_point()+
+  geom_line()+
+  geom_errorbar(aes(ymin = avgRegEr.k-se, ymax = avgRegEr.k +se))+xlab("Model Numbers")+ ylab("Regression Error")
+
+
+  k=5
+  numRows = 107
+  errors = rep(0,k)
+  totalError = 0
+  
+  for(i in 1:k){
+    test = filter(geoRandom, id >= (i-1)*numRows/k+1 & id <=i*numRows/k)
+    train = anti_join(geoRandom, test, by="id")
+    model = lm(eval(parse(text=paste(modelnames[2])), train))
+    errors2[i] = mean((test$cases.april - predict.lm(model, test))^2)
+    totalError2 = errors[i] + totalError
+  }
+  errors2
+  avgerror2 = totalError/k
+  
+  
+  
+ 
+  avgRegEr/k
+  
+  rVal = seq(1,10) # just creating space in a vector (i.e. array)
+  rValxs = seq(1,10) # creating a vector of model numbers
+  for(i in 1:10){
+    model = lm(data=faithful, eruptions~poly(waiting,i))
+    rVal[i] = summary(model)$r.squared
+  }
+  # View(rVal) #double checking the data is correct
+  modelR2vals = data.frame(rValxs, rVal) #creating a true "data set"
+  ggplot(data=modelR2vals)+
+    geom_point(aes(x = rValxs, y=rVal))+
+    geom_path(aes(x = rValxs, y=rVal))+
+    xlab("Model Complexity - eruptions = f(waiting^i)")+
+    ylab("Model Accuracy (R^2 Value)")
+  ggplot(data=modelR2vals, aes(x = rValxs, y = rVal))+
+    geom_point()+
+    geom_path()+
+    xlab("Model Complexity - eruptions = f(waiting^i)")+
+    ylab("Model Accuracy (R^2 Value)")
+ 
+  
+   #PART 6 OTHER TRENDS
+  
+  numRows = nrow(monthlygeo)
+  id = seq(1, numRows, by = 1)
+  geoShuffle = slice(monthlygeo, sample(1:n()))
+  geoShuffle = mutate(geoShuffle, id)
+  
+  abc = seq(0,5)
+  
+  
+  
+ggplot(data=modelR2vals)+
+  geom_point(aes(x = rValxs, y=rVal))+
+  geom_path(aes(x = rValxs, y=rVal))+
+  xlab("Model Complexity - eruptions =f(waiting^i)")+
+  ylab("Model Accuracy (R^2 Value)")
+  
+
+
+best = regsubsets(cases.april~., data = geoNoName, nvmax=20)
+x = seq(1,7, by = 1)
+rsquared= summary(best)$rsq
+rsqRes = data.frame(x,rsquared)
+rsqRes$bic <- summary(best2)$bic
+plot(summary(best)$rsq)
+
+coefaaa <- matrix(nrow = 2, ncol = 6, byrow=TRUE)
+x= seq(1,6, by = 1)
+y =  coef(best,5)
+coefRes = data.frame (x, y)
+view(coefRes)
+View(coefRes)
+
+
+attach(tourism)
+nrow(tourism)
+colnames(tourism)
+2017[which(`Country Name` == "Canada")]
+#View(tourism[, c(1, 14:24)])#column numbers might be different in the document included
+ncol(tourism)
+example<-dplyr::select(tourism, `Country Name`, `2009` : '2019' )
+attach(example)
+which(`Country Name` == Canada)
+
+`2010`[which(`Country Name`=="Central African Republic")]#	38000
+`2016`[which(`Country Name`=="Congo")]#424000
+`2015`[which(`Country Name`=="Cambodia")]#1752000
+`2018`[which(`Country Name`=="Lao PDR")] # 3207000
+`2017`[which(`Country Name`=="Nepal")]#	1197000
+`2017`[which(`Country Name`=="Chad")] #52000
+`2016`[which(`Country Name`=="Uganda")]#	568000
+`2018`[which(`Country Name`=="Cambodia")]#	1995000
+
+
+DF18 = dplyr::select(example, `2018`)
+newdata18 <- na.omit(DF18)
+nrow(newdata18)
+attach(newdata18)
+median(newdata18$`2018`)#84730004
+
+DF17 = dplyr::select(example, `2017`)
+newdata17 <- na.omit(DF17)
+#View(newdata17)
+attach(newdata17)
+median(newdata17$`2017`)#8087000
+
